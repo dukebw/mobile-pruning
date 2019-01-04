@@ -19,11 +19,26 @@
 import torch
 
 from ..experiment import config
+from ..data import dataset
+
+
+def _get_data_loader(split, drop_last, shuffle, flags):
+    """Create and return dataset/loader for split."""
+    return torch.utils.data.dataloader.DataLoader(
+        dataset=dataset.H5Dataset(flags.h5_file, flags.input_size, split),
+        batch_size=flags.batch_size,
+        shuffle=shuffle,
+        num_workers=flags.num_workers,
+        pin_memory=True,
+        drop_last=drop_last)
 
 
 def train(flags):
     """Entry point for model training and validation."""
     torch.backends.cudnn.benchmark = True
+
+    train_loader = _get_data_loader('train', True, True, flags)
+    val_loader = _get_data_loader('val', False, False, flags)
 
 
 if __name__ == '__main__':
