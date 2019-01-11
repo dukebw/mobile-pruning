@@ -45,22 +45,6 @@ class ListParamInt(ListParam):
 
 
 CONFIG_OPTIONS = [
-    (bool,
-     'is_baseline',
-     """Run the (retrained) baseline, without learned fusion op?"""),
-
-    (bool,
-     'is_gumbel_discrete',
-     """Discrete (or continous) Gumbel softmax output?"""),
-
-    (bool,
-     'retrain',
-     """Retrain an architecture from scratch?"""),
-
-    (str,
-     'retrain_path',
-     """Path to controller weights for re-training fusion operator."""),
-
     (str,
      'checkpoint_path',
      """Paths to take checkpoint files (e.g., inception_v3.ckpt) from.
@@ -71,125 +55,47 @@ CONFIG_OPTIONS = [
      """),
 
     (str,
-     'dataset',
-     """Name of dataset that is being trained on.
-
-     This argument is needed to, for example, choose
-     an input pipeline function.
-     """),
-
-    (str,
      'description',
      """Description of the experiment run, to be added to the Visdom
      environment name.
      """),
 
     (str,
-     'glove_path',
-     """Path to Glove embedding file (300 dim)."""),
+     'h5_file',
+     """Path to HDF5 file with dataset."""),
 
     (str,
      'log_dir',
      """Path to take summaries and checkpoints from, and write them to."""),
 
     (str,
-     'train_log_file_path',
-     """Path to log timestamped messages to with experiment.logging (train).
+     'log_file_path',
+     """Path to log timestamped messages to with experiment.logging.
      """),
-
-    (str,
-     'val_log_file_path',
-     """Same as above (val)."""),
-
-    (str,
-     'h5_file',
-     """Path to HDF5 file with dataset."""),
-
-    (str,
-     'language_model',
-     """Language model to use. Has to be one of {skipthoughts, gru_glove}."""),
-
-    (str,
-     'model_name',
-     """Name of desired model to use, e.g. vgg, inception_v3."""),
 
     (str,
      'vis_server',
      """Server to post visualization data to."""),
 
     (int,
-     'architecture_index',
-     """Index of architecture in architectures to re-train."""),
-
-    (int,
      'batch_size',
      """Size of training minibatch."""),
 
     (int,
-     'dim_mm',
-     """Dimension of the space that the fusion operator projects combined
-     feature vectors into before the final prediction layer.
-     """),
-
-    (int,
-     'dim_q',
-     """Dimension of the question features vector."""),
-
-    (int,
-     'dim_v',
-     """Dimension of the visual features vector."""),
-
-    (int,
-     'entropy_decay_epochs',
-     """Epochs before entropy decay (by 1/2)."""),
+     'input_size',
+     """Image input dimension to model."""),
 
     (int,
      'max_epochs',
      """Maximum number of epochs in training run."""),
 
     (int,
-     'num_classes',
-     """Number of classes in the dataset."""),
-
-    (int,
-     'num_glimpses',
-     """Number of glimpses to use for attention."""),
-
-    (int,
-     'num_nodes',
-     """Number of nodes in fusion operator."""),
-
-    (int,
-     'num_workers',
-     """Number of worker threads to use in the PyTorch dataloader."""),
-
-    (int,
      'num_steps_per_summary',
      """Number of training/evaluation steps between writing a summary."""),
 
     (int,
-     'rank',
-     """Rank of mutan fusion operator."""),
-
-    (float,
-     'dropout_q',
-     """Proportion of dropout to use on the question feature vector."""),
-
-    (float,
-     'dropout_v',
-     """Proportion of dropout to use on the visual feature vector."""),
-
-    (float,
-     'dropout_mm',
-     """Proportion of dropout to use on the combined feature vector."""),
-
-    (float,
-     'dropout_classif',
-     """Amount of dropout to use before the linear predictive layer."""),
-
-    (float,
-     'entropy_coef',
-     """Entropy loss coefficient."""),
+     'num_workers',
+     """Number of worker threads to use in the PyTorch dataloader."""),
 
     (float,
      'initial_learning_rate',
@@ -204,30 +110,12 @@ CONFIG_OPTIONS = [
      """Momentum, for optimizers that use momentum."""),
 
     (float,
-     'selector_lr',
-     """Selector learning rate."""),
-
-    (float,
-     'sparsity',
-     """Weight on L1 norm for whatever."""),
-
-    (float,
-     'tau',
-     """Temperature scaling in Gumbel softmax."""),
+     'scale',
+     """MobileNetV2 scale."""),
 
     (float,
      'weight_decay',
      """Amount of weight decay to apply to non-bias weights."""),
-
-    (Choices,
-     'dataset_split',
-     ['train', 'train+val'],
-     """Which split of the data to train on."""),
-
-    (Choices,
-     'selection_algorithm',
-     ['darts', 'selector'],
-     """Which split of the data to train on."""),
 ]
 
 

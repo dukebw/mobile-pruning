@@ -64,7 +64,7 @@ class LinearBottleneck(torch.nn.Module):
         return out
 
 
-class MobileNet2(torch.nn.Module):
+class MobileNetV2(torch.nn.Module):
     """MobileNet2 implementation.
     """
 

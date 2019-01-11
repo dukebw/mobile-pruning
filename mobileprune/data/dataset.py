@@ -77,13 +77,12 @@ class H5Dataset(torch.utils.data.Dataset):
 
             num_per_class = np.empty(len(h5_data[split]), dtype=np.int32)
             for cls_name, class_imgs in h5_data[split].items():
-                idx = class_to_idx[cls_name]
-                num_per_class[idx] = len(class_imgs)
+                num_per_class[class_to_idx[cls_name]] = len(class_imgs)
 
         self.num_examples = 0
-        for n in num_per_class:
-            self.num_examples += n
-            self.class_upper_ind[idx] = self.num_examples
+        for i, num in enumerate(num_per_class):
+            self.num_examples += num
+            self.class_upper_ind[i] = self.num_examples
 
         print(self.class_upper_ind)
 
