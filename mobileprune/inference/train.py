@@ -19,14 +19,16 @@
 import math
 import time
 
+from apex.fp16_utils import network_to_half, FP16_Optimizer
+import numpy as np
 import torch
-from torch.optim.lr_scheduler import MultiStepLR
 
 from ..experiment import config
 from ..experiment import logging
 from ..data import dataset
 from ..data import types
-from ..models import checkpoint
+from ..models.checkpoint import load_checkpoint
+from ..models.checkpoint import save_checkpoint
 from ..models.mobilenetv2 import MobileNetV2
 
 
@@ -141,14 +143,71 @@ def _should_summarize(total_num_steps, step, flags):
         ((step + 1) == total_num_steps))
 
 
-def _log_metrics(split, meters, num_data, flags):
-    logging.log(f'{split} top 1: ({meters.top1.val}, {meters.top1.avg})',
-                flags.log_file_path)
-    logging.log(f'{split} top 5: ({meters.top5.val}, {meters.top5.avg})',
-                flags.log_file_path)
-    logging.log(f'{split} {meters.step}/{num_data} '
+def _log_metrics(split, meters, num_data, lr, flags):
+    logging.log(f'{split} lr: {lr} step: {meters.step}/{num_data} '
                 f'({100.0*meters.step/num_data}%)',
                 flags.log_file_path)
+    logging.log(f'top 1: ({meters.top1.val}, {meters.top1.avg})',
+                flags.log_file_path)
+    logging.log(f'top 5: ({meters.top5.val}, {meters.top5.avg})',
+                flags.log_file_path)
+
+
+# NOTE(brendan): https://github.com/NVIDIA/apex/blob/3c7a0e4442c41bc5afa183fe4dd0672a729a3ec9/examples/imagenet/main_fp16_optimizer.py#L249
+class DataPrefetcher:
+    def __init__(self, loader, use_fp16):
+        self.use_fp16 = use_fp16
+
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        self.mean = torch.tensor(
+            [0.485*255, 0.456*255, 0.406*255]).cuda().view(1, 3, 1, 1)
+        self.std = torch.tensor(
+            [0.229*255, 0.224*255, 0.225*255]).cuda().view(1, 3, 1, 1)
+        if use_fp16:
+            self.mean = self.mean.half()
+            self.std = self.std.half()
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_input, self.next_target = next(self.loader)
+        except StopIteration:
+            self.next_input = None
+            self.next_target = None
+            return
+        with torch.cuda.stream(self.stream):
+            self.next_input = self.next_input.cuda(non_blocking=True)
+            self.next_target = self.next_target.cuda(non_blocking=True)
+            if self.use_fp16:
+                self.next_input = self.next_input.half()
+            else:
+                self.next_input = self.next_input.float()
+            self.next_input = self.next_input.sub_(self.mean).div_(self.std)
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        input = self.next_input
+        target = self.next_target
+        self.preload()
+        return input, target
+
+
+def _adjust_learning_rate(optimizer, epoch, step, len_epoch, initial_lr):
+    """LR schedule that should yield 76% converged accuracy with batch size 256"""
+    factor = epoch // 30
+
+    if epoch >= 80:
+        factor = factor + 1
+
+    lr = initial_lr*(0.1**factor)
+
+    """Warmup"""
+    if epoch < 5:
+        lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 
 def _train_single_epoch(boxs_loop, epoch, flags):
@@ -168,25 +227,41 @@ def _train_single_epoch(boxs_loop, epoch, flags):
 
     meters = _get_meters(epoch)
 
+    prefetcher = DataPrefetcher(boxs_loop.data.train, flags.use_fp16)
+    inputs, labels = prefetcher.next()
+    meters.step = -1
+
     end = time.time()
-    for meters.step, (inputs, labels) in enumerate(boxs_loop.data.train):
+    while inputs is not None:
         meters.data_time.update(time.time() - end)
-        labels = labels.cuda(non_blocking=True)
+        meters.step += 1
+
+        _adjust_learning_rate(boxs_loop.optimizer,
+                              epoch,
+                              meters.step,
+                              len(boxs_loop.data.train),
+                              flags.initial_learning_rate)
 
         preds = boxs_loop.model(inputs)
         loss = boxs_loop.criterion(preds, labels)
 
         boxs_loop.optimizer.zero_grad()
-        loss.backward()
+        if flags.use_fp16:
+            boxs_loop.optimizer.backward(loss)
+        else:
+            loss.backward()
         boxs_loop.optimizer.step()
 
         top1, top5 = _accuracy(preds, labels)
         meters.top1.update(top1)
         meters.top5.update(top5)
 
+        inputs, labels = prefetcher.next()
+
         num_train = len(boxs_loop.data.train)
         if _should_summarize(num_train, meters.step, flags):
-            _log_metrics('train', meters, num_train, flags)
+            lr = boxs_loop.optimizer.param_groups[0]['lr']
+            _log_metrics('train', meters, num_train, lr, flags)
 
 
 def _validation(boxs_loop, epoch, flags):
@@ -194,9 +269,16 @@ def _validation(boxs_loop, epoch, flags):
     boxs_loop.model.eval()
 
     meters = _get_meters(epoch)
+
+    prefetcher = DataPrefetcher(boxs_loop.data.train, flags.use_fp16)
+    inputs, labels = prefetcher.next()
+    meters.step = -1
+
     end = time.time()
-    for meters.step, (inputs, labels) in enumerate(boxs_loop.data.val):
+    while inputs is not None:
         meters.data_time.update(time.time() - end)
+        meters.step += 1
+
         labels = labels.cuda(non_blocking=True)
 
         preds = boxs_loop.model(inputs)
@@ -205,9 +287,32 @@ def _validation(boxs_loop, epoch, flags):
         meters.top1.update(top1)
         meters.top5.update(top5)
 
+        inputs, labels = prefetcher.next()
+
         num_val = len(boxs_loop.data.val)
         if _should_summarize(num_val, meters.step, flags):
-            _log_metrics('val', meters, num_val, flags)
+            lr = boxs_loop.optimizer.param_groups[0]['lr']
+            _log_metrics('val', meters, num_val, lr, flags)
+
+    return meters.top1.avg
+
+
+# NOTE(brendan): https://github.com/NVIDIA/apex/blob/3c7a0e4442c41bc5afa183fe4dd0672a729a3ec9/examples/imagenet/main_fp16_optimizer.py#L78
+def _fast_collate(batch):
+    imgs = [img[0] for img in batch]
+    targets = torch.tensor([target[1] for target in batch], dtype=torch.int64)
+    w = imgs[0].size[0]
+    h = imgs[0].size[1]
+    tensor = torch.zeros( (len(imgs), 3, h, w), dtype=torch.uint8 )
+    for i, img in enumerate(imgs):
+        nump_array = np.asarray(img, dtype=np.uint8)
+        if(nump_array.ndim < 3):
+            nump_array = np.expand_dims(nump_array, axis=-1)
+        nump_array = np.rollaxis(nump_array, 2)
+
+        tensor[i] += torch.from_numpy(nump_array)
+
+    return tensor, targets
 
 
 def _get_data_loader(split, drop_last, shuffle, flags):
@@ -218,7 +323,8 @@ def _get_data_loader(split, drop_last, shuffle, flags):
         shuffle=shuffle,
         num_workers=flags.num_workers,
         pin_memory=True,
-        drop_last=drop_last)
+        drop_last=drop_last,
+        collate_fn=_fast_collate)
 
 
 def train(flags):
@@ -230,39 +336,44 @@ def train(flags):
 
     model = MobileNetV2(input_size=flags.input_size, scale=flags.scale)
     model = torch.nn.DataParallel(model).cuda()
+    if flags.use_fp16:
+        model = network_to_half(model)
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
+    lr = flags.initial_learning_rate*flags.batch_size/256.0
     optimizer = torch.optim.SGD(model.parameters(),
-                                flags.initial_learning_rate,
+                                lr,
                                 momentum=flags.momentum,
                                 weight_decay=flags.weight_decay,
                                 nesterov=True)
+    if flags.use_fp16:
+        optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
 
     boxs_loop = BoxsLoop(criterion=criterion,
                          data=Loaders(train=train_loader, val=val_loader),
                          model=model,
                          optimizer=optimizer)
 
-    scheduler = MultiStepLR(optimizer, milestones=[200, 300], gamma=0.1)
-
-    epoch = checkpoint.load_checkpoint(boxs_loop,
-                                       flags.checkpoint_path,
-                                       flags.log_file_path)
+    epoch = load_checkpoint(boxs_loop,
+                            flags.checkpoint_path,
+                            flags.log_file_path)
     epoch = 0 if epoch is None else (epoch + 1)
 
+    best_prec1 = None
     for epoch in range(epoch, flags.max_epochs):
-        logging.log(f'=> Epochs {epoch}, learning rate = {scheduler.get_lr()}.',
-                    flags.log_file_path)
-
-        scheduler.step()
+        logging.log(f'=> Epochs {epoch}', flags.log_file_path)
 
         _train_single_epoch(boxs_loop, epoch, flags)
 
         with torch.no_grad():
-            _validation(boxs_loop, epoch, flags)
+            prec1 = _validation(boxs_loop, epoch, flags)
 
-        checkpoint.save_checkpoint(boxs_loop, epoch, flags)
+        if (best_prec1 is None) or (prec1 > best_prec1):
+            save_checkpoint(boxs_loop, epoch, flags, 'best.pth.tar')
+            best_prec1 = prec1
+
+        save_checkpoint(boxs_loop, epoch, flags)
 
 
 if __name__ == '__main__':

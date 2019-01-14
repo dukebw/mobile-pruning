@@ -45,6 +45,10 @@ class ListParamInt(ListParam):
 
 
 CONFIG_OPTIONS = [
+    (bool,
+     'use_fp16',
+     """Use FP16, dynamic loss scaling."""),
+
     (str,
      'checkpoint_path',
      """Paths to take checkpoint files (e.g., inception_v3.ckpt) from.
@@ -74,12 +78,22 @@ CONFIG_OPTIONS = [
      """),
 
     (str,
+     'model_name',
+     """Name of desired model to use, e.g. vgg, inception_v3."""),
+
+    (str,
      'vis_server',
      """Server to post visualization data to."""),
 
     (int,
      'batch_size',
      """Size of training minibatch."""),
+
+    (int,
+     'checkpoint_save_interval',
+     """Save the model whenever `checkpoint_save_interval` epochs have
+     passed.
+     """),
 
     (int,
      'input_size',
@@ -149,12 +163,3 @@ def parse_args():
                                 help=opt[2])
 
     return parser.parse_args()
-
-
-def get_unique_id(flags):
-    """Returns a unique ID based on the set of hyperparameters and other
-    configuration options given by `flags`.
-    """
-    return '_'.join([flags.description,
-                     flags.model_name,
-                     os.path.basename(flags.log_dir)])

@@ -67,7 +67,11 @@ def _has_file_allowed_extension(filename):
 @click.command()
 @click.option('--out', type=str, default=None, help='Out filepath.')
 @click.option('--root-dir', type=str, default=None, help='ImageNet directory.')
-def create_hdf5(out, root_dir):
+@click.option('--short-size',
+              type=int,
+              default=None,
+              help='Downsample images to this.')
+def create_hdf5(out, root_dir, short_size):
     root_dir = os.path.expanduser(root_dir)
     root_dir = path.Path(root_dir)
 
@@ -104,7 +108,6 @@ def create_hdf5(out, root_dir):
                     img = Image.open(img_io)
                     w, h = img.size
 
-                    short_size = 480
                     if min(w, h) > short_size:
                         img.load()
 

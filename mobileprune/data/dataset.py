@@ -33,16 +33,12 @@ def _inception_preprocess(input_size):
     return transforms.Compose([
         transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(**IMAGENET_STATS)
     ])
 
 
 def _scale_crop(input_size):
     t_list = [
         transforms.CenterCrop(input_size),
-        transforms.ToTensor(),
-        transforms.Normalize(**IMAGENET_STATS),
     ]
 
     scale_size = int(input_size / 0.875)

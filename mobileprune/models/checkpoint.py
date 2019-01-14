@@ -72,7 +72,7 @@ def load_checkpoint(boxs_loop, checkpoint_path, log_file_path):
     return epoch
 
 
-def save_checkpoint(boxs_loop, epoch, flags):
+def save_checkpoint(boxs_loop, epoch, flags, ckpt_name=None):
     """Save the checkpoint for this epoch.
 
     Also, delete a checkpoint from five saves ago, if said checkpoint exists.
@@ -83,7 +83,8 @@ def save_checkpoint(boxs_loop, epoch, flags):
         epoch: This is epoch number ?
         flags.*: See experiment.config.CONFIG_OPTIONS.
     """
-    should_save = ((flags.checkpoint_save_interval is None) or
+    should_save = ((ckpt_name is not None) or
+                   (flags.checkpoint_save_interval is None) or
                    ((epoch % flags.checkpoint_save_interval) == 0))
     if not should_save:
         return
@@ -98,7 +99,8 @@ def save_checkpoint(boxs_loop, epoch, flags):
     if (epoch >= five_back) and os.path.exists(checkpoint_5_back):
         os.remove(checkpoint_5_back)
 
-    ckpt_name = f'model_{os.getpid()}_checkpoint{epoch}.pth.tar'
+    if ckpt_name is None:
+        ckpt_name = f'model_{os.getpid()}_checkpoint{epoch}.pth.tar'
     save_state = {'epoch': epoch,
                   'arch': flags.model_name,
                   'state_dict': boxs_loop.model.state_dict(),
