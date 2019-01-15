@@ -194,7 +194,9 @@ class DataPrefetcher:
 
 
 def _adjust_learning_rate(optimizer, epoch, step, len_epoch, initial_lr):
-    """LR schedule that should yield 76% converged accuracy with batch size 256"""
+    """LR schedule that should yield 76% converged accuracy with batch size
+    256.
+    """
     factor = epoch // 30
 
     if epoch >= 80:
@@ -240,7 +242,7 @@ def _train_single_epoch(boxs_loop, epoch, flags):
                               epoch,
                               meters.step,
                               len(boxs_loop.data.train),
-                              flags.initial_learning_rate)
+                              flags.lr)
 
         preds = boxs_loop.model(inputs)
         loss = boxs_loop.criterion(preds, labels)
@@ -341,9 +343,9 @@ def train(flags):
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
 
-    lr = flags.initial_learning_rate*flags.batch_size/256.0
+    flags.lr = flags.lr * flags.batch_size / 256.0
     optimizer = torch.optim.SGD(model.parameters(),
-                                lr,
+                                flags.lr,
                                 momentum=flags.momentum,
                                 weight_decay=flags.weight_decay,
                                 nesterov=True)
@@ -370,6 +372,8 @@ def train(flags):
             prec1 = _validation(boxs_loop, epoch, flags)
 
         if (best_prec1 is None) or (prec1 > best_prec1):
+            logging.log(f'new best! epoch: {epoch} prec1: {prec1}',
+                        flags.log_file_path)
             save_checkpoint(boxs_loop, epoch, flags, 'best.pth.tar')
             best_prec1 = prec1
 

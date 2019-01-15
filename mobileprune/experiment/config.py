@@ -112,7 +112,7 @@ CONFIG_OPTIONS = [
      """Number of worker threads to use in the PyTorch dataloader."""),
 
     (float,
-     'initial_learning_rate',
+     'lr',
      """Initial learning rate."""),
 
     (float,
