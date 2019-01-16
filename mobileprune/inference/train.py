@@ -271,7 +271,7 @@ def _validation(boxs_loop, epoch, flags):
 
     meters = _get_meters(epoch)
 
-    prefetcher = DataPrefetcher(boxs_loop.data.train, flags.use_fp16)
+    prefetcher = DataPrefetcher(boxs_loop.data.val, flags.use_fp16)
     inputs, labels = prefetcher.next()
     meters.step = -1
 
