@@ -124,12 +124,20 @@ CONFIG_OPTIONS = [
      """Momentum, for optimizers that use momentum."""),
 
     (float,
+     'prog_resize_after',
+     """Progressive upsize after this amount of the current LR epochs."""),
+
+    (float,
      'scale',
      """MobileNetV2 scale."""),
 
     (float,
      'weight_decay',
      """Amount of weight decay to apply to non-bias weights."""),
+
+    (ListParamInt,
+     'lr_schedule',
+     """List of epochs to drop LR at."""),
 ]
 
 

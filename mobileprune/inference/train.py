@@ -147,6 +147,10 @@ def _log_metrics(split, meters, num_data, lr, flags):
     logging.log(f'{split} lr: {lr} step: {meters.step}/{num_data} '
                 f'({100.0*meters.step/num_data}%)',
                 flags.log_file_path)
+    logging.log(f'batch time: ({meters.batch_time.val}, {meters.batch_time.avg})',
+                flags.log_file_path)
+    logging.log(f'data time: ({meters.data_time.val}, {meters.data_time.avg})',
+                flags.log_file_path)
     logging.log(f'top 1: ({meters.top1.val}, {meters.top1.avg})',
                 flags.log_file_path)
     logging.log(f'top 5: ({meters.top5.val}, {meters.top5.avg})',
@@ -193,16 +197,14 @@ class DataPrefetcher:
         return input, target
 
 
-def _adjust_learning_rate(optimizer, epoch, step, len_epoch, initial_lr):
+def _adjust_learning_rate(optimizer, epoch, step, len_epoch, flags):
     """LR schedule that should yield 76% converged accuracy with batch size
     256.
     """
-    factor = epoch // 30
+    if epoch in flags.lr_schedule:
+        flags.lr *= 0.1
 
-    if epoch >= 80:
-        factor = factor + 1
-
-    lr = initial_lr*(0.1**factor)
+    lr = flags.lr
 
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
@@ -241,7 +243,7 @@ def _train_single_epoch(boxs_loop, epoch, flags):
                               epoch,
                               meters.step,
                               len(boxs_loop.data.train),
-                              flags.lr)
+                              flags)
 
         preds = boxs_loop.model(inputs)
         loss = boxs_loop.criterion(preds, labels)
@@ -253,10 +255,14 @@ def _train_single_epoch(boxs_loop, epoch, flags):
             loss.backward()
         boxs_loop.optimizer.step()
 
+        torch.cuda.synchronize()
+        meters.batch_time.update(time.time() - end)
+
         top1, top5 = _accuracy(preds, labels)
         meters.top1.update(top1)
         meters.top5.update(top5)
 
+        end = time.time()
         inputs, labels = prefetcher.next()
 
         num_train = len(boxs_loop.data.train)
@@ -316,11 +322,11 @@ def _fast_collate(batch):
     return tensor, targets
 
 
-def _get_data_loader(split, drop_last, shuffle, flags):
+def _get_data_loader(split, drop_last, shuffle, batch_size, input_size, flags):
     """Create and return dataset/loader for split."""
     return torch.utils.data.dataloader.DataLoader(
-        dataset=dataset.H5Dataset(flags.h5_file, flags.input_size, split),
-        batch_size=flags.batch_size,
+        dataset=dataset.H5Dataset(flags.h5_file, input_size, split),
+        batch_size=batch_size,
         shuffle=shuffle,
         num_workers=flags.num_workers,
         pin_memory=True,
@@ -328,12 +334,26 @@ def _get_data_loader(split, drop_last, shuffle, flags):
         collate_fn=_fast_collate)
 
 
+def _get_loaders(batch_size, input_size, flags):
+    train_loader = _get_data_loader('train',
+                                    True,
+                                    True,
+                                    batch_size,
+                                    input_size,
+                                    flags)
+    val_loader = _get_data_loader('val',
+                                  False,
+                                  False,
+                                  batch_size,
+                                  input_size,
+                                  flags)
+
+    return Loaders(train=train_loader, val=val_loader)
+
+
 def train(flags):
     """Entry point for model training and validation."""
     torch.backends.cudnn.benchmark = True
-
-    train_loader = _get_data_loader('train', True, True, flags)
-    val_loader = _get_data_loader('val', False, False, flags)
 
     model = MobileNetV2(input_size=flags.input_size, scale=flags.scale)
     model = torch.nn.DataParallel(model).cuda()
@@ -351,8 +371,9 @@ def train(flags):
     if flags.use_fp16:
         optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
 
+    loaders = _get_loaders(flags.batch_size, flags.input_size//2, flags)
     boxs_loop = BoxsLoop(criterion=criterion,
-                         data=Loaders(train=train_loader, val=val_loader),
+                         data=loaders,
                          model=model,
                          optimizer=optimizer)
 
@@ -361,9 +382,25 @@ def train(flags):
                             flags.log_file_path)
     epoch = 0 if epoch is None else (epoch + 1)
 
+    prog_resize_epochs = []
+    for prev_e, next_e in zip([0] + flags.lr_schedule[:-1], flags.lr_schedule):
+        next_prog_resize = round(flags.prog_resize_after*(next_e - prev_e)) + prev_e
+        prog_resize_epochs.append(next_prog_resize)
+
     best_prec1 = None
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
+
+        if epoch in prog_resize_epochs:
+            boxs_loop.data = _get_loaders(flags.batch_size//4,
+                                          flags.input_size,
+                                          flags)
+            flags.lr /= 4
+        elif epoch in flags.lr_schedule[:-1]:
+            boxs_loop.data = _get_loaders(flags.batch_size,
+                                          flags.input_size//2,
+                                          flags)
+            flags.lr *= 4
 
         _train_single_epoch(boxs_loop, epoch, flags)
 

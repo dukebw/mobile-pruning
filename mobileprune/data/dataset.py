@@ -29,14 +29,14 @@ IMAGENET_STATS = {'mean': [0.485, 0.456, 0.406], 'std': [0.229, 0.224, 0.225]}
 
 
 # NOTE(brendan): from https://github.com/Randl/MobileNetV2-pytorch/blob/3518846c69971c10cae89b6b29497a502200da65/data.py#L13
-def _inception_preprocess(input_size):
+def inception_preprocess(input_size):
     return transforms.Compose([
         transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
     ])
 
 
-def _scale_crop(input_size):
+def scale_crop(input_size):
     t_list = [
         transforms.CenterCrop(input_size),
     ]
@@ -57,10 +57,10 @@ class H5Dataset(torch.utils.data.Dataset):
         self.split = split
 
         if split == 'train':
-            self.transform = _inception_preprocess(input_size)
+            self.transform = inception_preprocess(input_size)
         else:
             assert split == 'val'
-            self.transform = _scale_crop(input_size)
+            self.transform = scale_crop(input_size)
 
         with h5py.File(h5_file, mode='r') as h5_data:
             self.class_upper_ind = np.empty(len(h5_data[split]),
@@ -79,8 +79,6 @@ class H5Dataset(torch.utils.data.Dataset):
         for i, num in enumerate(num_per_class):
             self.num_examples += num
             self.class_upper_ind[i] = self.num_examples
-
-        print(self.class_upper_ind)
 
     def __getitem__(self, index):
         """ImageNet dataset: returns (img, target class)."""
