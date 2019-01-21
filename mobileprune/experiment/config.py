@@ -46,6 +46,10 @@ class ListParamInt(ListParam):
 
 CONFIG_OPTIONS = [
     (bool,
+     'use_prog_resize',
+     """Use progressive resizing?"""),
+
+    (bool,
      'use_fp16',
      """Use FP16, dynamic loss scaling."""),
 

@@ -25,9 +25,6 @@ import torch
 from torchvision import transforms
 
 
-IMAGENET_STATS = {'mean': [0.485, 0.456, 0.406], 'std': [0.229, 0.224, 0.225]}
-
-
 # NOTE(brendan): from https://github.com/Randl/MobileNetV2-pytorch/blob/3518846c69971c10cae89b6b29497a502200da65/data.py#L13
 def inception_preprocess(input_size):
     return transforms.Compose([

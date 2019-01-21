@@ -207,7 +207,7 @@ def _adjust_learning_rate(optimizer, epoch, step, len_epoch, flags):
     lr = flags.lr
 
     if epoch < 5:
-        lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
+        lr = lr*float(1 + step + epoch*len_epoch)/(5.0*len_epoch)
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -371,7 +371,10 @@ def train(flags):
     if flags.use_fp16:
         optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
 
-    loaders = _get_loaders(flags.batch_size, flags.input_size//2, flags)
+    input_size = flags.input_size
+    if flags.use_prog_resize:
+        input_size //= 2
+    loaders = _get_loaders(flags.batch_size, input_size, flags)
     boxs_loop = BoxsLoop(criterion=criterion,
                          data=loaders,
                          model=model,
@@ -391,16 +394,17 @@ def train(flags):
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
 
-        if epoch in prog_resize_epochs:
-            boxs_loop.data = _get_loaders(flags.batch_size//4,
-                                          flags.input_size,
-                                          flags)
-            flags.lr /= 4
-        elif epoch in flags.lr_schedule[:-1]:
-            boxs_loop.data = _get_loaders(flags.batch_size,
-                                          flags.input_size//2,
-                                          flags)
-            flags.lr *= 4
+        if flags.use_prog_resize:
+            if epoch in prog_resize_epochs:
+                boxs_loop.data = _get_loaders(flags.batch_size//4,
+                                              flags.input_size,
+                                              flags)
+                flags.lr /= 4
+            elif epoch in flags.lr_schedule[:-1]:
+                boxs_loop.data = _get_loaders(flags.batch_size,
+                                              flags.input_size//2,
+                                              flags)
+                flags.lr *= 4
 
         _train_single_epoch(boxs_loop, epoch, flags)
 

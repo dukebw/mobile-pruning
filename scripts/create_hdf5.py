@@ -108,7 +108,7 @@ def create_hdf5(out, root_dir, short_size):
                     img = Image.open(img_io)
                     w, h = img.size
 
-                    if min(w, h) > short_size:
+                    if (short_size is not None) and (min(w, h) > short_size):
                         img.load()
 
                         if h > w:
