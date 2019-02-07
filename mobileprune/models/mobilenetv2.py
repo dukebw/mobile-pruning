@@ -1,3 +1,20 @@
+# Copyright 2018 Brendan Duke.
+#
+# This file is part of Mobile Prune.
+#
+# Mobile Prune is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# Mobile Prune is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# Mobile Prune. If not, see <http://www.gnu.org/licenses/>.
+
 """From
 https://github.com/Randl/MobileNetV2-pytorch/blob/3518846c69971c10cae89b6b29497a502200da65/model.py
 """
@@ -5,6 +22,8 @@ from collections import OrderedDict
 
 import torch
 from torch.nn import init
+
+from .ib_layers import InformationBottleneck
 
 
 def _make_divisible(v, divisor, min_value=None):
@@ -68,7 +87,13 @@ class MobileNetV2(torch.nn.Module):
     """MobileNet2 implementation.
     """
 
-    def __init__(self, scale=1.0, input_size=224, t=6, in_channels=3, num_classes=1000, activation=torch.nn.ReLU6):
+    def __init__(self,
+                 scale=1.0,
+                 input_size=224,
+                 t=6,
+                 in_channels=3,
+                 num_classes=1000,
+                 activation=torch.nn.ReLU6):
         """
         MobileNet2 constructor.
         :param in_channels: (int, optional): number of channels in the input tensor.
@@ -92,19 +117,31 @@ class MobileNetV2(torch.nn.Module):
         self.num_of_channels = [32, 16, 24, 32, 64, 96, 160, 320]
         # assert (input_size % 32 == 0)
 
-        self.c = [_make_divisible(ch * self.scale, 8) for ch in self.num_of_channels]
+        self.c = [_make_divisible(ch * self.scale, 8)
+                  for ch in self.num_of_channels]
         self.n = [1, 1, 2, 3, 4, 3, 3, 1]
         self.s = [2, 1, 2, 2, 2, 1, 2, 1]
-        self.conv1 = torch.nn.Conv2d(in_channels, self.c[0], kernel_size=3, bias=False, stride=self.s[0], padding=1)
+        self.conv1 = torch.nn.Conv2d(in_channels,
+                                     self.c[0],
+                                     kernel_size=3,
+                                     bias=False,
+                                     stride=self.s[0],
+                                     padding=1)
         self.bn1 = torch.nn.BatchNorm2d(self.c[0])
         self.bottlenecks = self._make_bottlenecks()
 
         # Last convolution has 1280 output channels for scale <= 1
-        self.last_conv_out_ch = 1280 if self.scale <= 1 else _make_divisible(1280 * self.scale, 8)
-        self.conv_last = torch.nn.Conv2d(self.c[-1], self.last_conv_out_ch, kernel_size=1, bias=False)
+        if self.scale <= 1:
+            self.last_conv_out_ch = 1280
+        else:
+            self.last_conv_out_ch = _make_divisible(1280 * self.scale, 8)
+        self.conv_last = torch.nn.Conv2d(self.c[-1],
+                                         self.last_conv_out_ch,
+                                         kernel_size=1,
+                                         bias=False)
         self.bn_last = torch.nn.BatchNorm2d(self.last_conv_out_ch)
         self.avgpool = torch.nn.AdaptiveAvgPool2d(1)
-        self.dropout = torch.nn.Dropout(p=0.2, inplace=True)  # confirmed by paper authors
+        self.dropout = torch.nn.Dropout(p=0.2, inplace=True)
         self.fc = torch.nn.Linear(self.last_conv_out_ch, self.num_classes)
         self.init_params()
 
@@ -127,14 +164,20 @@ class MobileNetV2(torch.nn.Module):
         stage_name = "LinearBottleneck{}".format(stage)
 
         # First module is the only one utilizing stride
-        first_module = LinearBottleneck(inplanes=inplanes, outplanes=outplanes, stride=stride, t=t,
+        first_module = LinearBottleneck(inplanes=inplanes,
+                                        outplanes=outplanes,
+                                        stride=stride,
+                                        t=t,
                                         activation=self.activation_type)
         modules[stage_name + "_0"] = first_module
 
         # add more LinearBottleneck depending on number of repeats
         for i in range(n - 1):
             name = stage_name + "_{}".format(i + 1)
-            module = LinearBottleneck(inplanes=outplanes, outplanes=outplanes, stride=1, t=6,
+            module = LinearBottleneck(inplanes=outplanes,
+                                      outplanes=outplanes,
+                                      stride=1,
+                                      t=6,
                                       activation=self.activation_type)
             modules[name] = module
 
@@ -145,14 +188,20 @@ class MobileNetV2(torch.nn.Module):
         stage_name = "Bottlenecks"
 
         # First module is the only one with t=1
-        bottleneck1 = self._make_stage(inplanes=self.c[0], outplanes=self.c[1], n=self.n[1], stride=self.s[1], t=1,
+        bottleneck1 = self._make_stage(inplanes=self.c[0],
+                                       outplanes=self.c[1],
+                                       n=self.n[1],
+                                       stride=self.s[1],
+                                       t=1,
                                        stage=0)
         modules[stage_name + "_0"] = bottleneck1
 
         # add more LinearBottleneck depending on number of repeats
         for i in range(1, len(self.c) - 1):
             name = stage_name + "_{}".format(i)
-            module = self._make_stage(inplanes=self.c[i], outplanes=self.c[i + 1], n=self.n[i + 1],
+            module = self._make_stage(inplanes=self.c[i],
+                                      outplanes=self.c[i + 1],
+                                      n=self.n[i + 1],
                                       stride=self.s[i + 1],
                                       t=self.t, stage=i)
             modules[name] = module
@@ -175,4 +224,163 @@ class MobileNetV2(torch.nn.Module):
 
         # flatten for input to fully-connected layer
         x = x.view(x.size(0), -1)
+        return self.fc(x)
+
+
+class MobileNetV2IB(torch.nn.Module):
+
+    def __init__(self,
+                 scale=1.0,
+                 input_size=224,
+                 t=6,
+                 in_channels=3,
+                 num_classes=1000,
+                 activation=torch.nn.ReLU6):
+        torch.nn.Module.__init__(self)
+
+        self.scale = scale
+        self.t = t
+        self.activation_type = activation
+        self.activation = activation(inplace=True)
+        self.num_classes = num_classes
+
+        self.init_var = 0.01
+        self.threshold = 0
+        self.sample_in_training = True
+        self.sample_in_testing = False
+        self.kl_mult_base = 1.0/32
+
+        self.num_of_channels = [32, 16, 24, 32, 64, 96, 160, 320]
+        # assert (input_size % 32 == 0)
+
+        self.c = [_make_divisible(ch * self.scale, 8)
+                  for ch in self.num_of_channels]
+        self.n = [1, 1, 2, 3, 4, 3, 3, 1]
+        self.s = [2, 1, 2, 2, 2, 1, 2, 1]
+        self.conv1 = torch.nn.Conv2d(in_channels,
+                                     self.c[0],
+                                     kernel_size=3,
+                                     bias=False,
+                                     stride=self.s[0],
+                                     padding=1)
+        self.bn1 = torch.nn.BatchNorm2d(self.c[0])
+        self.ib1 = InformationBottleneck(
+            self.c[0],
+            mask_thresh=self.threshold,
+            init_mag=self.init_mag,
+            init_var=self.init_var,
+            kl_mult=self.kl_mult_base,
+            sample_in_training=self.sample_in_training,
+            sample_in_testing=self.sample_in_testing)
+        self.bottlenecks, bottleneck_kl_list = self._make_bottlenecks()
+
+        # Last convolution has 1280 output channels for scale <= 1
+        if self.scale <= 1:
+            self.last_conv_out_ch = 1280
+        else:
+            self.last_conv_out_ch = _make_divisible(1280 * self.scale, 8)
+        self.conv_last = torch.nn.Conv2d(self.c[-1],
+                                         self.last_conv_out_ch,
+                                         kernel_size=1,
+                                         bias=False)
+        self.bn_last = torch.nn.BatchNorm2d(self.last_conv_out_ch)
+        self.ib_last = InformationBottleneck(
+            self.last_conv_out_ch,
+            mask_thresh=self.threshold,
+            init_mag=self.init_mag,
+            init_var=self.init_var,
+            kl_mult=self.kl_mult_base,
+            sample_in_training=self.sample_in_training,
+            sample_in_testing=self.sample_in_testing)
+
+        self.avgpool = torch.nn.AdaptiveAvgPool2d(1)
+        self.dropout = torch.nn.Dropout(p=0.2, inplace=True)
+        self.fc = torch.nn.Linear(self.last_conv_out_ch, self.num_classes)
+
+        self.kl_list = [self.ib1] + bottleneck_kl_list + [self.ib_last]
+
+        self.init_params()
+
+    def init_params(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv2d):
+                init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+            elif isinstance(m, torch.nn.BatchNorm2d):
+                init.constant_(m.weight, 1)
+                init.constant_(m.bias, 0)
+            elif isinstance(m, torch.nn.Linear):
+                init.normal_(m.weight, std=0.001)
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+
+    def _make_stage(self, inplanes, outplanes, n, stride, t, stage):
+        modules = OrderedDict()
+        stage_name = "LinearBottleneck{}".format(stage)
+
+        # First module is the only one utilizing stride
+        first_module = LinearBottleneck(inplanes=inplanes,
+                                        outplanes=outplanes,
+                                        stride=stride,
+                                        t=t,
+                                        activation=self.activation_type)
+        modules[stage_name + "_0"] = first_module
+
+        # add more LinearBottleneck depending on number of repeats
+        for i in range(n - 1):
+            name = stage_name + "_{}".format(i + 1)
+            module = LinearBottleneck(inplanes=outplanes,
+                                      outplanes=outplanes,
+                                      stride=1,
+                                      t=6,
+                                      activation=self.activation_type)
+            modules[name] = module
+
+        return torch.nn.Sequential(modules)
+
+    def _make_bottlenecks(self):
+        modules = OrderedDict()
+        stage_name = "Bottlenecks"
+
+        # First module is the only one with t=1
+        bottleneck1 = self._make_stage(inplanes=self.c[0],
+                                       outplanes=self.c[1],
+                                       n=self.n[1],
+                                       stride=self.s[1],
+                                       t=1,
+                                       stage=0)
+        modules[stage_name + "_0"] = bottleneck1
+
+        # add more LinearBottleneck depending on number of repeats
+        for i in range(1, len(self.c) - 1):
+            name = stage_name + "_{}".format(i)
+            module = self._make_stage(inplanes=self.c[i],
+                                      outplanes=self.c[i + 1],
+                                      n=self.n[i + 1],
+                                      stride=self.s[i + 1],
+                                      t=self.t, stage=i)
+            modules[name] = module
+
+        return torch.nn.Sequential(modules)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.activation(x)
+        x = self.ib1(x)
+
+        x = self.bottlenecks(x)
+        x = self.conv_last(x)
+        x = self.bn_last(x)
+        x = self.activation(x)
+        x = self.ib_last(x)
+
+        # average pooling layer
+        x = self.avgpool(x)
+        x = self.dropout(x)
+
+        # flatten for input to fully-connected layer
+        x = x.view(x.size(0), -1)
+
         return self.fc(x)

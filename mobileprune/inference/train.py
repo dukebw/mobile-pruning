@@ -372,8 +372,6 @@ def train(flags):
         optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
 
     input_size = flags.input_size
-    if flags.use_prog_resize:
-        input_size //= 2
     loaders = _get_loaders(flags.batch_size, input_size, flags)
     boxs_loop = BoxsLoop(criterion=criterion,
                          data=loaders,
@@ -385,26 +383,9 @@ def train(flags):
                             flags.log_file_path)
     epoch = 0 if epoch is None else (epoch + 1)
 
-    prog_resize_epochs = []
-    for prev_e, next_e in zip([0] + flags.lr_schedule[:-1], flags.lr_schedule):
-        next_prog_resize = round(flags.prog_resize_after*(next_e - prev_e)) + prev_e
-        prog_resize_epochs.append(next_prog_resize)
-
     best_prec1 = None
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
-
-        if flags.use_prog_resize:
-            if epoch in prog_resize_epochs:
-                boxs_loop.data = _get_loaders(flags.batch_size//4,
-                                              flags.input_size,
-                                              flags)
-                flags.lr /= 4
-            elif epoch in flags.lr_schedule[:-1]:
-                boxs_loop.data = _get_loaders(flags.batch_size,
-                                              flags.input_size//2,
-                                              flags)
-                flags.lr *= 4
 
         _train_single_epoch(boxs_loop, epoch, flags)
 
