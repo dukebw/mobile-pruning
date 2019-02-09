@@ -47,16 +47,35 @@ def _make_divisible(v, divisor, min_value=None):
 
 
 class LinearBottleneck(torch.nn.Module):
-    def __init__(self, inplanes, outplanes, stride=1, t=6, activation=torch.nn.ReLU6):
+    def __init__(self,
+                 inplanes,
+                 outplanes,
+                 stride=1,
+                 t=6,
+                 activation=torch.nn.ReLU6):
         torch.nn.Module.__init__(self)
 
-        self.conv1 = torch.nn.Conv2d(inplanes, inplanes * t, kernel_size=1, bias=False)
+        self.conv1 = torch.nn.Conv2d(inplanes,
+                                     inplanes * t,
+                                     kernel_size=1,
+                                     bias=False)
         self.bn1 = torch.nn.BatchNorm2d(inplanes * t)
-        self.conv2 = torch.nn.Conv2d(inplanes * t, inplanes * t, kernel_size=3, stride=stride, padding=1, bias=False,
-                               groups=inplanes * t)
+
+        self.conv2 = torch.nn.Conv2d(inplanes * t,
+                                     inplanes * t,
+                                     kernel_size=3,
+                                     stride=stride,
+                                     padding=1,
+                                     bias=False,
+                                     groups=inplanes * t)
         self.bn2 = torch.nn.BatchNorm2d(inplanes * t)
-        self.conv3 = torch.nn.Conv2d(inplanes * t, outplanes, kernel_size=1, bias=False)
+
+        self.conv3 = torch.nn.Conv2d(inplanes * t,
+                                     outplanes,
+                                     kernel_size=1,
+                                     bias=False)
         self.bn3 = torch.nn.BatchNorm2d(outplanes)
+
         self.activation = activation(inplace=True)
         self.stride = stride
         self.t = t
@@ -227,6 +246,80 @@ class MobileNetV2(torch.nn.Module):
         return self.fc(x)
 
 
+class LinearBottleneckIB(torch.nn.Module):
+    def __init__(self,
+                 inplanes,
+                 outplanes,
+                 stride=1,
+                 t=6,
+                 activation=torch.nn.ReLU6):
+        torch.nn.Module.__init__(self)
+
+        self.conv1 = torch.nn.Conv2d(inplanes,
+                                     inplanes * t,
+                                     kernel_size=1,
+                                     bias=False)
+        self.bn1 = torch.nn.BatchNorm2d(inplanes * t)
+        self.ib1 = InformationBottleneck(
+            inplanes * t,
+            mask_thresh=self.threshold,
+            init_mag=self.init_mag,
+            init_var=self.init_var,
+            kl_mult=self.kl_mult_base,
+            sample_in_training=self.sample_in_training,
+            sample_in_testing=self.sample_in_testing)
+
+        self.conv2 = torch.nn.Conv2d(inplanes * t,
+                                     inplanes * t,
+                                     kernel_size=3,
+                                     stride=stride,
+                                     padding=1,
+                                     bias=False,
+                                     groups=inplanes * t)
+        self.bn2 = torch.nn.BatchNorm2d(inplanes * t)
+
+        self.conv3 = torch.nn.Conv2d(inplanes * t,
+                                     outplanes,
+                                     kernel_size=1,
+                                     bias=False)
+        self.bn3 = torch.nn.BatchNorm2d(outplanes)
+        self.ib3 = InformationBottleneck(
+            outplanes,
+            mask_thresh=self.threshold,
+            init_mag=self.init_mag,
+            init_var=self.init_var,
+            kl_mult=self.kl_mult_base,
+            sample_in_training=self.sample_in_training,
+            sample_in_testing=self.sample_in_testing)
+
+        self.activation = activation(inplace=True)
+        self.stride = stride
+        self.t = t
+        self.inplanes = inplanes
+        self.outplanes = outplanes
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activation(out)
+        out = self.ib1(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.activation(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.ib3(out)
+
+        if self.stride == 1 and self.inplanes == self.outplanes:
+            out += residual
+
+        return out
+
+
 class MobileNetV2IB(torch.nn.Module):
 
     def __init__(self,
@@ -320,21 +413,21 @@ class MobileNetV2IB(torch.nn.Module):
         stage_name = "LinearBottleneck{}".format(stage)
 
         # First module is the only one utilizing stride
-        first_module = LinearBottleneck(inplanes=inplanes,
-                                        outplanes=outplanes,
-                                        stride=stride,
-                                        t=t,
-                                        activation=self.activation_type)
+        first_module = LinearBottleneckIB(inplanes=inplanes,
+                                          outplanes=outplanes,
+                                          stride=stride,
+                                          t=t,
+                                          activation=self.activation_type)
         modules[stage_name + "_0"] = first_module
 
-        # add more LinearBottleneck depending on number of repeats
+        # add more LinearBottleneckIB depending on number of repeats
         for i in range(n - 1):
             name = stage_name + "_{}".format(i + 1)
-            module = LinearBottleneck(inplanes=outplanes,
-                                      outplanes=outplanes,
-                                      stride=1,
-                                      t=6,
-                                      activation=self.activation_type)
+            module = LinearBottleneckIB(inplanes=outplanes,
+                                        outplanes=outplanes,
+                                        stride=1,
+                                        t=6,
+                                        activation=self.activation_type)
             modules[name] = module
 
         return torch.nn.Sequential(modules)
@@ -352,7 +445,7 @@ class MobileNetV2IB(torch.nn.Module):
                                        stage=0)
         modules[stage_name + "_0"] = bottleneck1
 
-        # add more LinearBottleneck depending on number of repeats
+        # add more LinearBottleneckIB depending on number of repeats
         for i in range(1, len(self.c) - 1):
             name = stage_name + "_{}".format(i)
             module = self._make_stage(inplanes=self.c[i],
