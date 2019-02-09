@@ -52,7 +52,8 @@ class LinearBottleneck(torch.nn.Module):
                  outplanes,
                  stride=1,
                  t=6,
-                 activation=torch.nn.ReLU6):
+                 activation=torch.nn.ReLU6,
+                 grp_fact=1):
         torch.nn.Module.__init__(self)
 
         self.conv1 = torch.nn.Conv2d(inplanes,
@@ -61,13 +62,14 @@ class LinearBottleneck(torch.nn.Module):
                                      bias=False)
         self.bn1 = torch.nn.BatchNorm2d(inplanes * t)
 
+        groups = max(inplanes * t // grp_fact, 1)
         self.conv2 = torch.nn.Conv2d(inplanes * t,
                                      inplanes * t,
                                      kernel_size=3,
                                      stride=stride,
                                      padding=1,
                                      bias=False,
-                                     groups=inplanes * t)
+                                     groups=groups)
         self.bn2 = torch.nn.BatchNorm2d(inplanes * t)
 
         self.conv3 = torch.nn.Conv2d(inplanes * t,
@@ -112,7 +114,8 @@ class MobileNetV2(torch.nn.Module):
                  t=6,
                  in_channels=3,
                  num_classes=1000,
-                 activation=torch.nn.ReLU6):
+                 activation=torch.nn.ReLU6,
+                 grp_fact=1):
         """
         MobileNet2 constructor.
         :param in_channels: (int, optional): number of channels in the input tensor.
@@ -131,6 +134,7 @@ class MobileNetV2(torch.nn.Module):
         self.t = t
         self.activation_type = activation
         self.activation = activation(inplace=True)
+        self.grp_fact = grp_fact
         self.num_classes = num_classes
 
         self.num_of_channels = [32, 16, 24, 32, 64, 96, 160, 320]
@@ -187,7 +191,8 @@ class MobileNetV2(torch.nn.Module):
                                         outplanes=outplanes,
                                         stride=stride,
                                         t=t,
-                                        activation=self.activation_type)
+                                        activation=self.activation_type,
+                                        self.grp_fact)
         modules[stage_name + "_0"] = first_module
 
         # add more LinearBottleneck depending on number of repeats
@@ -197,7 +202,8 @@ class MobileNetV2(torch.nn.Module):
                                       outplanes=outplanes,
                                       stride=1,
                                       t=6,
-                                      activation=self.activation_type)
+                                      activation=self.activation_type,
+                                      self.grp_fact)
             modules[name] = module
 
         return torch.nn.Sequential(modules)

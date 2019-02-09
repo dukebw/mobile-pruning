@@ -90,6 +90,10 @@ CONFIG_OPTIONS = [
      """Size of training minibatch."""),
 
     (int,
+     'grp_fact',
+     """Denominator of number of groups for bottleneck."""),
+
+    (int,
      'input_size',
      """Image input dimension to model."""),
 

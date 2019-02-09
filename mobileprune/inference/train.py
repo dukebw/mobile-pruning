@@ -359,7 +359,9 @@ def train(flags):
     """Entry point for model training and validation."""
     torch.backends.cudnn.benchmark = True
 
-    model = MobileNetV2(input_size=flags.input_size, scale=flags.scale)
+    model = MobileNetV2(input_size=flags.input_size,
+                        scale=flags.scale,
+                        grp_fact=flags.grp_fact)
     model = torch.nn.DataParallel(model).cuda()
     if flags.use_fp16:
         model = network_to_half(model)
