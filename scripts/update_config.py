@@ -25,8 +25,13 @@ import click
 @click.option('--log-dir', type=str, default=None, help='Log directory.')
 @click.option('--key', type=str, default=None, help='Key.')
 @click.option('--val', type=str, default=None, help='Value.')
-def update_config(log_dir, key, val):
+@click.option('--val-type',
+              type=click.Choice(['bool', 'float', 'int', 'string']))
+def update_config(log_dir, key, val, val_type):
     """Reset a single parameter in config file."""
+    name_to_type = {'bool': bool, 'float': float, 'int': int, 'string': str}
+    val = name_to_type[val_type](val)
+
     fpath = f'{log_dir}/config.json'
     with open(fpath, 'r') as f:
         config_json = json.load(f)
