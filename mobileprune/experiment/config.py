@@ -90,12 +90,6 @@ CONFIG_OPTIONS = [
      """Size of training minibatch."""),
 
     (int,
-     'checkpoint_save_interval',
-     """Save the model whenever `checkpoint_save_interval` epochs have
-     passed.
-     """),
-
-    (int,
      'input_size',
      """Image input dimension to model."""),
 

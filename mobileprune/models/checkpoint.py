@@ -83,20 +83,10 @@ def save_checkpoint(boxs_loop, epoch, flags, ckpt_name=None):
         epoch: This is epoch number ?
         flags.*: See experiment.config.CONFIG_OPTIONS.
     """
-    should_save = ((ckpt_name is not None) or
-                   (flags.checkpoint_save_interval is None) or
-                   ((epoch % flags.checkpoint_save_interval) == 0))
-    if not should_save:
-        return
-
-    five_back = 5
-    if flags.checkpoint_save_interval is not None:
-        five_back *= flags.checkpoint_save_interval
-
     log_dir = path.Path(flags.log_dir)
-    fname = f'model_{os.getpid()}_checkpoint{epoch - five_back}.pth.tar'
+    fname = f'model_{os.getpid()}_checkpoint{epoch - 5}.pth.tar'
     checkpoint_5_back = log_dir/fname
-    if (epoch >= five_back) and os.path.exists(checkpoint_5_back):
+    if (epoch >= 5) and os.path.exists(checkpoint_5_back):
         os.remove(checkpoint_5_back)
 
     if ckpt_name is None:

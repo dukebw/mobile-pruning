@@ -17,9 +17,13 @@
 
 """Choo choo."""
 import math
+import os
 import time
 
-from apex.fp16_utils import network_to_half, FP16_Optimizer
+try:
+    from apex.fp16_utils import network_to_half, FP16_Optimizer
+except:
+    print('could not import apex')
 import numpy as np
 import torch
 
@@ -378,12 +382,24 @@ def train(flags):
                          model=model,
                          optimizer=optimizer)
 
+    latest_ckpt_path = f'{flags.log_dir}/latest_checkpoint'
+    if (flags.checkpoint_path is None) and os.path.exists(latest_ckpt_path):
+        with open(latest_ckpt_path, 'r') as f:
+            flags.checkpoint_path = f'{flags.log_dir}/{f.read().strip()}'
+        logging.log(f'Loading latest checkpoint {flags.checkpoint_path}',
+                    flags.log_file_path)
     epoch = load_checkpoint(boxs_loop,
                             flags.checkpoint_path,
                             flags.log_file_path)
     epoch = 0 if epoch is None else (epoch + 1)
 
     best_prec1 = None
+    best_ckpt_path = f'{flags.log_dir}/best_checkpoint'
+    if os.path.exists(best_ckpt_path):
+        with open(best_ckpt_path, 'r') as f:
+            best_prec1 = f.read().split(',')[-1]
+        best_prec1 = float(best_prec1)
+
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
 
@@ -396,6 +412,8 @@ def train(flags):
             logging.log(f'new best! epoch: {epoch} prec1: {prec1}',
                         flags.log_file_path)
             save_checkpoint(boxs_loop, epoch, flags, 'best.pth.tar')
+            with open(best_ckpt_path, 'w') as f:
+                f.write(f'{epoch},{prec1}')
             best_prec1 = prec1
 
         save_checkpoint(boxs_loop, epoch, flags)
