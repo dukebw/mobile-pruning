@@ -192,7 +192,7 @@ class MobileNetV2(torch.nn.Module):
                                         stride=stride,
                                         t=t,
                                         activation=self.activation_type,
-                                        self.grp_fact)
+                                        grp_fact=self.grp_fact)
         modules[stage_name + "_0"] = first_module
 
         # add more LinearBottleneck depending on number of repeats
@@ -203,7 +203,7 @@ class MobileNetV2(torch.nn.Module):
                                       stride=1,
                                       t=6,
                                       activation=self.activation_type,
-                                      self.grp_fact)
+                                      grp_fact=self.grp_fact)
             modules[name] = module
 
         return torch.nn.Sequential(modules)
