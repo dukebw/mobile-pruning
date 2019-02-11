@@ -400,7 +400,8 @@ def train(flags):
     if os.path.exists(best_ckpt_path):
         with open(best_ckpt_path, 'r') as f:
             best_prec1 = f.read().split(',')[-1]
-        best_prec1 = float(best_prec1)
+        # TODO(brendan): best_prec1 should be saved as a float, not list
+        best_prec1 = float(best_prec1[0])
 
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
