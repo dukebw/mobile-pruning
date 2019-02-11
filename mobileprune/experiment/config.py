@@ -110,6 +110,10 @@ CONFIG_OPTIONS = [
      """Number of worker threads to use in the PyTorch dataloader."""),
 
     (float,
+     'kl_fac',
+     """KL divergence term factor."""),
+
+    (float,
      'lr',
      """Initial learning rate."""),
 

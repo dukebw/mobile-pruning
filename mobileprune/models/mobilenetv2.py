@@ -283,6 +283,14 @@ class LinearBottleneckIB(torch.nn.Module):
                                      bias=False,
                                      groups=inplanes * t)
         self.bn2 = torch.nn.BatchNorm2d(inplanes * t)
+        self.ib2 = InformationBottleneck(
+            inplanes * t,
+            mask_thresh=self.threshold,
+            init_mag=self.init_mag,
+            init_var=self.init_var,
+            kl_mult=self.kl_mult_base,
+            sample_in_training=self.sample_in_training,
+            sample_in_testing=self.sample_in_testing)
 
         self.conv3 = torch.nn.Conv2d(inplanes * t,
                                      outplanes,
@@ -303,6 +311,7 @@ class LinearBottleneckIB(torch.nn.Module):
         self.t = t
         self.inplanes = inplanes
         self.outplanes = outplanes
+        self.kl_list = [self.ib1, self.ib2, self.ib3]
 
     def forward(self, x):
         residual = x
@@ -315,6 +324,7 @@ class LinearBottleneckIB(torch.nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.activation(out)
+        out = self.ib2(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -436,32 +446,35 @@ class MobileNetV2IB(torch.nn.Module):
                                         activation=self.activation_type)
             modules[name] = module
 
-        return torch.nn.Sequential(modules)
+        return torch.nn.Sequential(modules), [m.kl_list for m in modules]
 
     def _make_bottlenecks(self):
         modules = OrderedDict()
         stage_name = "Bottlenecks"
 
+        kl_list = []
         # First module is the only one with t=1
-        bottleneck1 = self._make_stage(inplanes=self.c[0],
-                                       outplanes=self.c[1],
-                                       n=self.n[1],
-                                       stride=self.s[1],
-                                       t=1,
-                                       stage=0)
+        bottleneck1, kls = self._make_stage(inplanes=self.c[0],
+                                            outplanes=self.c[1],
+                                            n=self.n[1],
+                                            stride=self.s[1],
+                                            t=1,
+                                            stage=0)
         modules[stage_name + "_0"] = bottleneck1
+        kl_list.append(kls)
 
         # add more LinearBottleneckIB depending on number of repeats
         for i in range(1, len(self.c) - 1):
             name = stage_name + "_{}".format(i)
-            module = self._make_stage(inplanes=self.c[i],
-                                      outplanes=self.c[i + 1],
-                                      n=self.n[i + 1],
-                                      stride=self.s[i + 1],
-                                      t=self.t, stage=i)
+            module, kls = self._make_stage(inplanes=self.c[i],
+                                           outplanes=self.c[i + 1],
+                                           n=self.n[i + 1],
+                                           stride=self.s[i + 1],
+                                           t=self.t, stage=i)
             modules[name] = module
+            kl_list.append(kls)
 
-        return torch.nn.Sequential(modules)
+        return torch.nn.Sequential(modules), kl_list
 
     def forward(self, x):
         x = self.conv1(x)
@@ -482,4 +495,8 @@ class MobileNetV2IB(torch.nn.Module):
         # flatten for input to fully-connected layer
         x = x.view(x.size(0), -1)
 
-        return self.fc(x)
+        x = self.fc(x)
+
+        ib_kld = sum(kl.kld for kl in self.kl_list)
+
+        return x, ib_kld

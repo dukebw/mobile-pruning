@@ -34,6 +34,7 @@ from ..data import types
 from ..models.checkpoint import load_checkpoint
 from ..models.checkpoint import save_checkpoint
 from ..models.mobilenetv2 import MobileNetV2
+from ..models.mobilenetv2 import MobileNetV2IB
 
 
 class BoxsLoop(types.Struct):  # pylint:disable=too-few-public-methods
@@ -67,6 +68,7 @@ class Meters(types.Struct):  # pylint:disable=too-few-public-methods
     _fields = ['batch_time',
                'data_time',
                'epoch',
+               'kld',
                'top1',
                'top5',
                'grad_norm',
@@ -108,6 +110,7 @@ def _get_meters(epoch):
     return Meters(batch_time=AverageMeter(),
                   data_time=AverageMeter(),
                   epoch=epoch,
+                  kld=AverageMeter(),
                   top1=AverageMeter(),
                   top5=AverageMeter(),
                   grad_norm=AverageMeter(),
@@ -154,6 +157,8 @@ def _log_metrics(split, meters, num_data, lr, flags):
     logging.log(f'batch time: ({meters.batch_time.val}, {meters.batch_time.avg})',
                 flags.log_file_path)
     logging.log(f'data time: ({meters.data_time.val}, {meters.data_time.avg})',
+                flags.log_file_path)
+    logging.log(f'KL divergence: ({meters.kld.val}, {meters.kld.avg})',
                 flags.log_file_path)
     logging.log(f'top 1: ({meters.top1.val}, {meters.top1.avg})',
                 flags.log_file_path)
@@ -249,8 +254,11 @@ def _train_single_epoch(boxs_loop, epoch, flags):
                               len(boxs_loop.data.train),
                               flags)
 
-        preds = boxs_loop.model(inputs)
+        preds, kl_total = boxs_loop.model(inputs)
+        meters.kld.update(kl_total)
+
         loss = boxs_loop.criterion(preds, labels)
+        loss += flags.kl_fac*kl_total
 
         boxs_loop.optimizer.zero_grad()
         if flags.use_fp16:
@@ -292,7 +300,7 @@ def _validation(boxs_loop, epoch, flags):
 
         labels = labels.cuda(non_blocking=True)
 
-        preds = boxs_loop.model(inputs)
+        preds, _ = boxs_loop.model(inputs)
 
         top1, top5 = _accuracy(preds, labels)
         meters.top1.update(top1)
@@ -359,9 +367,13 @@ def train(flags):
     """Entry point for model training and validation."""
     torch.backends.cudnn.benchmark = True
 
-    model = MobileNetV2(input_size=flags.input_size,
-                        scale=flags.scale,
-                        grp_fact=flags.grp_fact)
+    model_table = {
+        'MobileNetV2': MobileNetV2,
+        'MobileNetV2IB': MobileNetV2IB,
+    }
+    model = model_table[flags.model_name](input_size=flags.input_size,
+                                          scale=flags.scale,
+                                          grp_fact=flags.grp_fact)
     model = torch.nn.DataParallel(model).cuda()
     if flags.use_fp16:
         model = network_to_half(model)
