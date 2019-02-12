@@ -136,7 +136,7 @@ def _accuracy(output, target):
         for k in topk:
             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
             correct_k = correct_k.mul_(100.0 / batch_size)
-            correct_k = correct_k.detach().cpu().numpy()
+            correct_k = correct_k.detach().cpu().numpy().item()
             res.append(correct_k)
         return res
 
@@ -413,7 +413,7 @@ def train(flags):
         with open(best_ckpt_path, 'r') as f:
             best_prec1 = f.read().split(',')[-1]
         # TODO(brendan): best_prec1 should be saved as a float, not list
-        best_prec1 = float(best_prec1[0])
+        best_prec1 = float(best_prec1)
 
     for epoch in range(epoch, flags.max_epochs):
         logging.log(f'=> Epochs {epoch}', flags.log_file_path)
