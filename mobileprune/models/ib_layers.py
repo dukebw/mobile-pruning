@@ -36,15 +36,7 @@ def _reparameterize(mu, logvar, batch_size, cuda=False, sampling=True):
 
 
 class InformationBottleneck(torch.nn.Module):
-    def __init__(self,
-                 dim,
-                 mask_thresh=0,
-                 init_mag=9,
-                 init_var=0.01,
-                 kl_mult=1,
-                 divide_w=False,
-                 sample_in_training=True,
-                 sample_in_testing=False):
+    def __init__(self, dim, ib_params):
         torch.nn.Module.__init__(self)
 
         self.post_z_mu = Parameter(torch.Tensor(dim))
@@ -52,19 +44,17 @@ class InformationBottleneck(torch.nn.Module):
 
         self.epsilon = 1e-8
         self.dim = dim
-        self.sample_in_training = sample_in_training
-        self.sample_in_testing = sample_in_testing
+        self.sample_in_training = ib_params.sample_in_training
+        self.sample_in_testing = ib_params.sample_in_testing
 
         # initialization
-        self.post_z_mu.data.normal_(1, init_var)
-        self.prior_z_logD.data.normal_(-init_mag, init_var)
-        self.post_z_logD.data.normal_(-init_mag, init_var)
+        self.post_z_mu.data.normal_(1, ib_params.init_var)
+        self.post_z_logD.data.normal_(-ib_params.init_mag, ib_params.init_var)
 
         self.need_update_z = True # flag for updating z during testing
-        self.mask_thresh = mask_thresh
-        self.kl_mult = kl_mult
-        self.divide_w = divide_w
-
+        self.mask_thresh = ib_params.threshold
+        self.kl_mult = ib_params.kl_mult_base
+        self.divide_w = False
 
     def adapt_shape(self, src_shape, x_shape):
         # to distinguish conv layers and fc layers
@@ -112,10 +102,9 @@ class InformationBottleneck(torch.nn.Module):
         else:
             z_scale = self.get_mask_weighted(self.mask_thresh)
 
-        self.kld = self.kl_closed_form(x)
         new_shape = self.adapt_shape(z_scale.size(), x.size())
 
-        return x * z_scale.view(new_shape)
+        return x * z_scale.view(new_shape), self.kl_closed_form(x)
 
     def kl_closed_form(self, x):
         new_shape = self.adapt_shape(self.post_z_mu.size(), x.size())

@@ -23,7 +23,19 @@ from collections import OrderedDict
 import torch
 from torch.nn import init
 
+from ..data import types
 from .ib_layers import InformationBottleneck
+
+
+class IbParams(types.Struct):  # pylint:disable=too-few-public-methods
+    """Information Bottleneck parameters."""
+
+    _fields = ['init_mag',
+               'init_var',
+               'threshold',
+               'sample_in_training',
+               'sample_in_testing',
+               'kl_mult_base']
 
 
 def _make_divisible(v, divisor, min_value=None):
@@ -254,11 +266,13 @@ class MobileNetV2(torch.nn.Module):
 
 class LinearBottleneckIB(torch.nn.Module):
     def __init__(self,
+                 ib_params,
                  inplanes,
                  outplanes,
                  stride=1,
                  t=6,
-                 activation=torch.nn.ReLU6):
+                 activation=torch.nn.ReLU6,
+                 grp_fact=1):
         torch.nn.Module.__init__(self)
 
         self.conv1 = torch.nn.Conv2d(inplanes,
@@ -266,52 +280,31 @@ class LinearBottleneckIB(torch.nn.Module):
                                      kernel_size=1,
                                      bias=False)
         self.bn1 = torch.nn.BatchNorm2d(inplanes * t)
-        self.ib1 = InformationBottleneck(
-            inplanes * t,
-            mask_thresh=self.threshold,
-            init_mag=self.init_mag,
-            init_var=self.init_var,
-            kl_mult=self.kl_mult_base,
-            sample_in_training=self.sample_in_training,
-            sample_in_testing=self.sample_in_testing)
+        self.ib1 = InformationBottleneck(inplanes * t, ib_params)
 
+        groups = max(inplanes * t // grp_fact, 1)
         self.conv2 = torch.nn.Conv2d(inplanes * t,
                                      inplanes * t,
                                      kernel_size=3,
                                      stride=stride,
                                      padding=1,
                                      bias=False,
-                                     groups=inplanes * t)
+                                     groups=groups)
         self.bn2 = torch.nn.BatchNorm2d(inplanes * t)
-        self.ib2 = InformationBottleneck(
-            inplanes * t,
-            mask_thresh=self.threshold,
-            init_mag=self.init_mag,
-            init_var=self.init_var,
-            kl_mult=self.kl_mult_base,
-            sample_in_training=self.sample_in_training,
-            sample_in_testing=self.sample_in_testing)
+        self.ib2 = InformationBottleneck(inplanes * t, ib_params)
 
         self.conv3 = torch.nn.Conv2d(inplanes * t,
                                      outplanes,
                                      kernel_size=1,
                                      bias=False)
         self.bn3 = torch.nn.BatchNorm2d(outplanes)
-        self.ib3 = InformationBottleneck(
-            outplanes,
-            mask_thresh=self.threshold,
-            init_mag=self.init_mag,
-            init_var=self.init_var,
-            kl_mult=self.kl_mult_base,
-            sample_in_training=self.sample_in_training,
-            sample_in_testing=self.sample_in_testing)
+        self.ib3 = InformationBottleneck(outplanes, ib_params)
 
         self.activation = activation(inplace=True)
         self.stride = stride
         self.t = t
         self.inplanes = inplanes
         self.outplanes = outplanes
-        self.kl_list = [self.ib1, self.ib2, self.ib3]
 
     def forward(self, x):
         residual = x
@@ -319,21 +312,23 @@ class LinearBottleneckIB(torch.nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.activation(out)
-        out = self.ib1(out)
+        out, kld = self.ib1(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.activation(out)
-        out = self.ib2(out)
+        out, kld2 = self.ib2(out)
+        kld += kld2
 
         out = self.conv3(out)
         out = self.bn3(out)
-        out = self.ib3(out)
+        out, kld3 = self.ib3(out)
+        kld += kld3
 
         if self.stride == 1 and self.inplanes == self.outplanes:
             out += residual
 
-        return out
+        return out, kld
 
 
 class MobileNetV2IB(torch.nn.Module):
@@ -344,20 +339,23 @@ class MobileNetV2IB(torch.nn.Module):
                  t=6,
                  in_channels=3,
                  num_classes=1000,
-                 activation=torch.nn.ReLU6):
+                 activation=torch.nn.ReLU6,
+                 grp_fact=1):
         torch.nn.Module.__init__(self)
 
         self.scale = scale
         self.t = t
         self.activation_type = activation
         self.activation = activation(inplace=True)
+        self.grp_fact = grp_fact
         self.num_classes = num_classes
 
-        self.init_var = 0.01
-        self.threshold = 0
-        self.sample_in_training = True
-        self.sample_in_testing = False
-        self.kl_mult_base = 1.0/32
+        self.ib_params = IbParams(init_mag=9,
+                                  init_var=0.01,
+                                  threshold=0,
+                                  sample_in_training=True,
+                                  sample_in_testing=False,
+                                  kl_mult_base=1.0/32)
 
         self.num_of_channels = [32, 16, 24, 32, 64, 96, 160, 320]
         # assert (input_size % 32 == 0)
@@ -373,15 +371,8 @@ class MobileNetV2IB(torch.nn.Module):
                                      stride=self.s[0],
                                      padding=1)
         self.bn1 = torch.nn.BatchNorm2d(self.c[0])
-        self.ib1 = InformationBottleneck(
-            self.c[0],
-            mask_thresh=self.threshold,
-            init_mag=self.init_mag,
-            init_var=self.init_var,
-            kl_mult=self.kl_mult_base,
-            sample_in_training=self.sample_in_training,
-            sample_in_testing=self.sample_in_testing)
-        self.bottlenecks, bottleneck_kl_list = self._make_bottlenecks()
+        self.ib1 = InformationBottleneck(self.c[0], self.ib_params)
+        self.bottlenecks = self._make_bottlenecks()
 
         # Last convolution has 1280 output channels for scale <= 1
         if self.scale <= 1:
@@ -393,20 +384,12 @@ class MobileNetV2IB(torch.nn.Module):
                                          kernel_size=1,
                                          bias=False)
         self.bn_last = torch.nn.BatchNorm2d(self.last_conv_out_ch)
-        self.ib_last = InformationBottleneck(
-            self.last_conv_out_ch,
-            mask_thresh=self.threshold,
-            init_mag=self.init_mag,
-            init_var=self.init_var,
-            kl_mult=self.kl_mult_base,
-            sample_in_training=self.sample_in_training,
-            sample_in_testing=self.sample_in_testing)
+        self.ib_last = InformationBottleneck(self.last_conv_out_ch,
+                                             self.ib_params)
 
         self.avgpool = torch.nn.AdaptiveAvgPool2d(1)
         self.dropout = torch.nn.Dropout(p=0.2, inplace=True)
         self.fc = torch.nn.Linear(self.last_conv_out_ch, self.num_classes)
-
-        self.kl_list = [self.ib1] + bottleneck_kl_list + [self.ib_last]
 
         self.init_params()
 
@@ -425,68 +408,70 @@ class MobileNetV2IB(torch.nn.Module):
                     init.constant_(m.bias, 0)
 
     def _make_stage(self, inplanes, outplanes, n, stride, t, stage):
-        modules = OrderedDict()
-        stage_name = "LinearBottleneck{}".format(stage)
+        modules = torch.nn.ModuleList()
 
         # First module is the only one utilizing stride
-        first_module = LinearBottleneckIB(inplanes=inplanes,
+        first_module = LinearBottleneckIB(self.ib_params,
+                                          inplanes=inplanes,
                                           outplanes=outplanes,
                                           stride=stride,
                                           t=t,
-                                          activation=self.activation_type)
-        modules[stage_name + "_0"] = first_module
+                                          activation=self.activation_type,
+                                          grp_fact=self.grp_fact)
+        modules.append(first_module)
 
         # add more LinearBottleneckIB depending on number of repeats
         for i in range(n - 1):
-            name = stage_name + "_{}".format(i + 1)
-            module = LinearBottleneckIB(inplanes=outplanes,
+            module = LinearBottleneckIB(self.ib_params,
+                                        inplanes=outplanes,
                                         outplanes=outplanes,
                                         stride=1,
                                         t=6,
-                                        activation=self.activation_type)
-            modules[name] = module
+                                        activation=self.activation_type,
+                                        grp_fact=self.grp_fact)
+            modules.append(module)
 
-        return torch.nn.Sequential(modules), [m.kl_list for m in modules]
+        return modules
 
     def _make_bottlenecks(self):
-        modules = OrderedDict()
-        stage_name = "Bottlenecks"
+        modules = torch.nn.ModuleList()
 
-        kl_list = []
         # First module is the only one with t=1
-        bottleneck1, kls = self._make_stage(inplanes=self.c[0],
-                                            outplanes=self.c[1],
-                                            n=self.n[1],
-                                            stride=self.s[1],
-                                            t=1,
-                                            stage=0)
-        modules[stage_name + "_0"] = bottleneck1
-        kl_list.append(kls)
+        bottleneck1 = self._make_stage(inplanes=self.c[0],
+                                       outplanes=self.c[1],
+                                       n=self.n[1],
+                                       stride=self.s[1],
+                                       t=1,
+                                       stage=0)
+        modules.append(bottleneck1)
 
         # add more LinearBottleneckIB depending on number of repeats
         for i in range(1, len(self.c) - 1):
-            name = stage_name + "_{}".format(i)
-            module, kls = self._make_stage(inplanes=self.c[i],
-                                           outplanes=self.c[i + 1],
-                                           n=self.n[i + 1],
-                                           stride=self.s[i + 1],
-                                           t=self.t, stage=i)
-            modules[name] = module
-            kl_list.append(kls)
+            module = self._make_stage(inplanes=self.c[i],
+                                      outplanes=self.c[i + 1],
+                                      n=self.n[i + 1],
+                                      stride=self.s[i + 1],
+                                      t=self.t, stage=i)
+            modules.append(module)
 
-        return torch.nn.Sequential(modules), kl_list
+        return modules
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.activation(x)
-        x = self.ib1(x)
+        x, kld = self.ib1(x)
 
-        x = self.bottlenecks(x)
+        for stg in self.bottlenecks:
+            for lbib in stg:
+                x, kld_lbib = lbib(x)
+                kld += kld_lbib
+
         x = self.conv_last(x)
         x = self.bn_last(x)
         x = self.activation(x)
-        x = self.ib_last(x)
+        x, kld_last = self.ib_last(x)
+        kld += kld_last
 
         # average pooling layer
         x = self.avgpool(x)
@@ -497,6 +482,4 @@ class MobileNetV2IB(torch.nn.Module):
 
         x = self.fc(x)
 
-        ib_kld = sum(kl.kld for kl in self.kl_list)
-
-        return x, ib_kld
+        return x, kld

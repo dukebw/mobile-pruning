@@ -69,6 +69,7 @@ class Meters(types.Struct):  # pylint:disable=too-few-public-methods
                'data_time',
                'epoch',
                'kld',
+               'loss',
                'top1',
                'top5',
                'grad_norm',
@@ -111,6 +112,7 @@ def _get_meters(epoch):
                   data_time=AverageMeter(),
                   epoch=epoch,
                   kld=AverageMeter(),
+                  loss=AverageMeter(),
                   top1=AverageMeter(),
                   top5=AverageMeter(),
                   grad_norm=AverageMeter(),
@@ -158,8 +160,11 @@ def _log_metrics(split, meters, num_data, lr, flags):
                 flags.log_file_path)
     logging.log(f'data time: ({meters.data_time.val}, {meters.data_time.avg})',
                 flags.log_file_path)
-    logging.log(f'KL divergence: ({meters.kld.val}, {meters.kld.avg})',
-                flags.log_file_path)
+    if split == 'train':
+        logging.log(f'KL divergence: ({meters.kld.val}, {meters.kld.avg})',
+                    flags.log_file_path)
+        logging.log(f'loss: ({meters.loss.val}, {meters.loss.avg})',
+                    flags.log_file_path)
     logging.log(f'top 1: ({meters.top1.val}, {meters.top1.avg})',
                 flags.log_file_path)
     logging.log(f'top 5: ({meters.top5.val}, {meters.top5.avg})',
@@ -210,10 +215,10 @@ def _adjust_learning_rate(optimizer, epoch, step, len_epoch, flags):
     """LR schedule that should yield 76% converged accuracy with batch size
     256.
     """
-    if epoch in flags.lr_schedule:
-        flags.lr *= 0.1
-
     lr = flags.lr
+    for sched_epoch in flags.lr_schedule:
+        if epoch >= sched_epoch:
+            lr *= 0.1
 
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.0*len_epoch)
@@ -254,11 +259,18 @@ def _train_single_epoch(boxs_loop, epoch, flags):
                               len(boxs_loop.data.train),
                               flags)
 
-        preds, kl_total = boxs_loop.model(inputs)
-        meters.kld.update(kl_total)
+        is_ib = flags.model_name == 'MobileNetV2IB'
+        if is_ib:
+            preds, kl_total = boxs_loop.model(inputs)
+            kl_total = kl_total.mean()
+            meters.kld.update(kl_total)
+        else:
+            preds = boxs_loop.model(inputs)
 
         loss = boxs_loop.criterion(preds, labels)
-        loss += flags.kl_fac*kl_total
+        meters.loss.update(loss)
+        if is_ib:
+            loss += flags.kl_fac*kl_total
 
         boxs_loop.optimizer.zero_grad()
         if flags.use_fp16:
@@ -300,7 +312,11 @@ def _validation(boxs_loop, epoch, flags):
 
         labels = labels.cuda(non_blocking=True)
 
-        preds, _ = boxs_loop.model(inputs)
+        is_ib = flags.model_name == 'MobileNetV2IB'
+        if is_ib:
+            preds, _ = boxs_loop.model(inputs)
+        else:
+            preds = boxs_loop.model(inputs)
 
         top1, top5 = _accuracy(preds, labels)
         meters.top1.update(top1)
