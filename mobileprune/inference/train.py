@@ -36,6 +36,7 @@ from ..models.checkpoint import save_checkpoint
 from ..models.ib_layers import InformationBottleneck
 from ..models.mobilenetv2 import MobileNetV2
 from ..models.mobilenetv2 import MobileNetV2IB
+from ..models.tinycnn import RoIFAN62, RoIFAN65
 
 
 class BoxsLoop(types.Struct):  # pylint:disable=too-few-public-methods
@@ -295,37 +296,38 @@ def _train_single_epoch(boxs_loop, epoch, flags):
             lr = boxs_loop.optimizer.param_groups[0]['lr']
             _log_metrics('train', meters, num_train, lr, flags)
 
-            ib_layers = [m for m in boxs_loop.model.modules()
-                         if isinstance(m, InformationBottleneck)]
+            if 'IB' in flags.model_name:
+                ib_layers = [m for m in boxs_loop.model.modules()
+                             if isinstance(m, InformationBottleneck)]
 
-            threshold = 0
-            masks = [ibl.get_mask_hard(threshold) for ibl in ib_layers]
-            prune_stats = [np.sum(m.cpu().numpy() == 0) for m in masks]
-            convs = []
-            strides = []
-            for m in boxs_loop.model.modules():
-                if isinstance(m, torch.nn.Conv2d):
-                    convs.append(m)
-                    strides.append(m.stride)
+                threshold = 0
+                masks = [ibl.get_mask_hard(threshold) for ibl in ib_layers]
+                prune_stats = [np.sum(m.cpu().numpy() == 0) for m in masks]
+                convs = []
+                strides = []
+                for m in boxs_loop.model.modules():
+                    if isinstance(m, torch.nn.Conv2d):
+                        convs.append(m)
+                        strides.append(m.stride)
 
-            flops = 0
-            feat_dim = 224
-            last_channels = convs[0].weight.shape[1]
-            assert len(convs) == len(masks) == len(strides) == len(prune_stats)
-            for conv, mask, stride, prune in zip(convs, masks, strides, prune_stats):
-                assert conv.weight.shape[0] == mask.shape[0], f'conv {conv.weight.shape} mask {mask.shape}'
-                feat_dim //= stride[0]
+                flops = 0
+                feat_dim = 224
+                last_channels = convs[0].weight.shape[1]
+                assert len(convs) == len(masks) == len(strides) == len(prune_stats)
+                for conv, mask, stride, prune in zip(convs, masks, strides, prune_stats):
+                    assert conv.weight.shape[0] == mask.shape[0], f'conv {conv.weight.shape} mask {mask.shape}'
+                    feat_dim //= stride[0]
 
-                current_channels = conv.weight.shape[0] - prune
-                flops += feat_dim**2 * 9 * last_channels * current_channels
-                last_channels = current_channels
+                    current_channels = conv.weight.shape[0] - prune
+                    flops += feat_dim**2 * 9 * last_channels * current_channels
+                    last_channels = current_channels
 
-            total_pruned = np.sum(prune_stats)
-            total_channels = np.sum([c.weight.shape[0] for c in convs])
-            logging.log(f'FLOPS: {flops} pruned: '
-                        f'{total_pruned}/{total_channels} == '
-                        f'{total_pruned/total_channels}',
-                        flags.log_file_path)
+                total_pruned = np.sum(prune_stats)
+                total_channels = np.sum([c.weight.shape[0] for c in convs])
+                logging.log(f'FLOPS: {flops} pruned: '
+                            f'{total_pruned}/{total_channels} == '
+                            f'{total_pruned/total_channels}',
+                            flags.log_file_path)
 
 
 def _validation(boxs_loop, epoch, flags):
@@ -419,10 +421,15 @@ def train(flags):
     model_table = {
         'MobileNetV2': MobileNetV2,
         'MobileNetV2IB': MobileNetV2IB,
+        'RoIFAN62': RoIFAN62,
+        'RoIFAN65': RoIFAN65,
     }
-    model = model_table[flags.model_name](input_size=flags.input_size,
-                                          scale=flags.scale,
-                                          grp_fact=flags.grp_fact)
+    if 'RoIFAN' in flags.model_name:
+        model = model_table[flags.model_name](n_classes=1000)
+    else:
+        model = model_table[flags.model_name](input_size=flags.input_size,
+                                              scale=flags.scale,
+                                              grp_fact=flags.grp_fact)
     model = torch.nn.DataParallel(model).cuda()
     if flags.use_fp16:
         model = network_to_half(model)
